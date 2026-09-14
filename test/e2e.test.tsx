@@ -269,6 +269,13 @@ describe('端到端：从空仓库起步的完整链路', () => {
     expect(Math.abs(w0 / w1 - 2)).toBeLessThan(0.01);
     expect(screen.getByTestId(`strip-len-${stripId(0)}`).textContent).toContain('10.0mm');
     expect(screen.getByTestId(`strip-len-${stripId(1)}`).textContent).toContain('5.0mm');
+
+    // 最长条材右端的长度标签必须完整落在 SVG 画布内，不被裁掉
+    const svg = screen.getByTestId('plan-svg') as unknown as SVGSVGElement;
+    const svgWidth = Number(svg.getAttribute('width'));
+    const longestLabel = screen.getByTestId(`strip-len-${stripId(0)}`) as unknown as SVGTextElement;
+    const labelEnd = Number(longestLabel.getAttribute('x')) + (longestLabel.getComputedTextLength?.() ?? 60);
+    expect(labelEnd).toBeLessThanOrEqual(svgWidth);
   });
 
   it('并列方案确定地选择三元组字典序最小者', async () => {

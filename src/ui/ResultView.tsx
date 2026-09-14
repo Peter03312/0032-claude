@@ -8,6 +8,8 @@ const ROW_H = 46;
 const PAD_LEFT = 92;
 const RULER_H = 26;
 const CUT_H = 70;
+// 最长条材右端外侧还要放末端刻度与「xxx mm」长度标签，留足空间避免被裁
+const RIGHT_PAD = 78;
 
 function niceStep(pxPerCell: number): number {
   // 目标标签间距约 90px
@@ -104,7 +106,7 @@ export function ResultView({ draft, out }: { draft: ProblemDraft; out: SolveResu
       <Legend />
 
       <div className="svg-scroll" data-testid="svg-scroll">
-        <svg width={PAD_LEFT + width + 24} height={RULER_H + model.strips.length * (ROW_H + CUT_H + 14) + 10} data-testid="plan-svg">
+        <svg width={PAD_LEFT + width + RIGHT_PAD} height={RULER_H + model.strips.length * (ROW_H + CUT_H + 14) + 10} data-testid="plan-svg">
           <defs>
             <pattern id="hatch-kerf" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
               <rect width="6" height="6" fill="#fdf0d5" />
