@@ -1,0 +1,20 @@
+services:
+  # 静态应用：浏览器访问 http://localhost:${APP_PORT:-8080}
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lead-came-nesting-bench:latest
+    ports:
+      - "${APP_PORT:-8080}:80"
+    restart: unless-stopped
+
+  # 一次性验收：docker compose --profile verify run --rm verify
+  # 依次执行类型检查、Vitest 算法与端到端测试、400 例随机差分对照、生产构建
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.verify
+    image: lead-came-nesting-bench-verify:latest
+    profiles: ["verify"]
+    command: ["npm", "run", "verify"]

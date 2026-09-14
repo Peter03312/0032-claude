@@ -1,0 +1,8 @@
+# 一次性验收服务：类型检查 → 单元/端到端测试 → 随机差分对照 → 生产构建。
+# 通过则退出码 0，任何一步失败立即退出非零。
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+CMD ["npm", "run", "verify"]
