@@ -127,6 +127,8 @@ input[aria-invalid='true'], input.invalid { border-color: var(--danger); backgro
 
 .solve-bar { display: flex; align-items: center; gap: 14px; margin: 4px 0 16px; }
 .form-error { color: var(--danger); font-size: 13px; }
+.stale-warning { color: #8a5a00; font-size: 13px; font-weight: 600; }
+.stale-banner { background: #fdf3d7; border: 1px solid #d2b35e; color: #6b531a; font-weight: 600; }
 
 .result-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
 .objectives { display: flex; gap: 18px; font-size: 14px; }

@@ -216,4 +216,81 @@ describe('端到端：从空仓库起步的完整链路', () => {
     await solve();
     expect(screen.getByTestId('result-view')).toBeTruthy();
   });
+
+  it('修改尺寸后旧下料图立即作废、无法下载，重新排料后恢复', async () => {
+    render(<App />);
+    await addStrips(1);
+    await setNum('strip-length-0', '10');
+    await addPieces(1);
+    await setNum('piece-length-0', '3');
+    await solve();
+    expect(screen.getByTestId('result-view')).toBeTruthy();
+    expect(screen.getByTestId('download-json')).toBeTruthy();
+
+    // 改动条材长度 → 结果立即标记过期：隐藏结果图与下载按钮
+    await setNum('strip-length-0', '9');
+    expect(screen.queryByTestId('result-view')).toBeNull();
+    expect(screen.queryByTestId('download-json')).toBeNull();
+    expect(screen.getByTestId('stale-banner').textContent).toContain('已作废');
+
+    // 重新排料 → 新方案恢复
+    await solve();
+    expect(screen.getByTestId('result-view')).toBeTruthy();
+    expect(screen.getByTestId('download-json')).toBeTruthy();
+    expect(screen.queryByTestId('stale-banner')).toBeNull();
+
+    // 改动锯缝/锁定/裁片长度也应作废
+    await setNum('kerf-input', '0.5');
+    expect(screen.queryByTestId('result-view')).toBeNull();
+    await setNum('kerf-input', '1.0');
+    await solve();
+    expect(screen.getByTestId('result-view')).toBeTruthy();
+    await setNum('piece-length-0', '4');
+    expect(screen.queryByTestId('result-view')).toBeNull();
+  });
+
+  it('短条材与长条材按真实长度成比例，且标注各自长度', async () => {
+    render(<App />);
+    await addStrips(2);
+    await setNum('strip-length-0', '10'); // 100 格
+    await setNum('strip-length-1', '5');  // 50 格
+    await addPieces(1);
+    await setNum('piece-length-0', '2');
+    await solve();
+
+    const s0 = screen.getByTestId('svg-strip-0');
+    const s1 = screen.getByTestId('svg-strip-1');
+    const bg0 = s0.querySelector('rect')!;
+    const bg1 = s1.querySelector('rect')!;
+    const w0 = Number(bg0.getAttribute('width'));
+    const w1 = Number(bg1.getAttribute('width'));
+    expect(w0).toBeGreaterThan(0);
+    // 10mm 料应约为 5mm 料的两倍宽
+    expect(Math.abs(w0 / w1 - 2)).toBeLessThan(0.01);
+    expect(screen.getByTestId(`strip-len-${stripId(0)}`).textContent).toContain('10.0mm');
+    expect(screen.getByTestId(`strip-len-${stripId(1)}`).textContent).toContain('5.0mm');
+  });
+
+  it('并列方案确定地选择三元组字典序最小者', async () => {
+    // 两根长度相同条材、两片：大片应落在字典序最小条材，小片随后
+    render(<App />);
+    await addStrips(2);
+    await setNum('strip-length-0', '2.0');
+    await setNum('strip-length-1', '2.0');
+    await addPieces(2);
+    await setNum('piece-length-0', '1.3');
+    await setNum('piece-length-1', '0.2');
+    await setNum('kerf-input', '0');
+    await solve();
+    const table = screen.getByTestId('cut-table');
+    const rows = within(table).getAllByRole('row').slice(1);
+    const p0id = pieceId(0);
+    const p1id = pieceId(1);
+    const row0 = rows.find((r) => within(r).queryAllByText(p0id).length > 0)!;
+    const row1 = rows.find((r) => within(r).queryAllByText(p1id).length > 0)!;
+    // 两片都在第一根条材（按标识字典序），目标①只需一条，起点 0.0 与 1.3
+    expect(row0.textContent).toContain(stripId(0));
+    expect(row1.textContent).toContain(stripId(0));
+    expect(screen.getByTestId('objectives').textContent).toContain('1 / 2');
+  });
 });

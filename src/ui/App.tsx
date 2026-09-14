@@ -27,6 +27,10 @@ export function App() {
   const [draft, setDraft] = useState<ProblemDraft>(initialDraft);
   const [attempted, setAttempted] = useState(false);
   const [result, setResult] = useState<{ snapshot: ProblemDraft; out: SolveResult } | null>(null);
+  // 输入指纹：草稿任何改动都会改变它，使上次求解结果立即作废，避免按旧尺寸落刀
+  const [solvedFingerprint, setSolvedFingerprint] = useState<string | null>(null);
+  const currentFingerprint = useMemo(() => fingerprintDraft(draft), [draft]);
+  const resultStale = result !== null && solvedFingerprint !== currentFingerprint;
 
   const validation = useMemo(() => validateProblem(draft), [draft]);
   const showErrors = attempted;
@@ -67,9 +71,11 @@ export function App() {
     const { problem, errors } = validateProblem(draft);
     if (Object.keys(errors).length > 0 || !problem) {
       setResult(null);
+      setSolvedFingerprint(null);
       return;
     }
     setResult({ snapshot: structuredClone(draft), out: solve(problem) });
+    setSolvedFingerprint(currentFingerprint);
   };
 
   return (
@@ -97,9 +103,24 @@ export function App() {
             有 {Object.keys(validation.errors).length} 处录入错误，请先修正标红字段
           </span>
         )}
+        {resultStale && (
+          <span className="stale-warning" data-testid="stale-warning">
+            尺寸或锁定已修改，下方下料图已过期，禁止按图落刀；请重新点「精确排料」
+          </span>
+        )}
       </section>
 
-      {result && <ResultView draft={result.snapshot} out={result.out} />}
+      {result && !resultStale && <ResultView draft={result.snapshot} out={result.out} />}
+      {result && resultStale && (
+        <div className="banner stale-banner" data-testid="stale-banner">
+          当前下料图基于修改前的尺寸生成，已作废。重新排料后才能查看与下载新方案。
+        </div>
+      )}
     </div>
   );
+}
+
+/** 输入指纹：条材/裁片/锯缝/复用阈值/锁定的完整序列化，任何改动都会使旧结果失效 */
+function fingerprintDraft(d: ProblemDraft): string {
+  return JSON.stringify(d);
 }

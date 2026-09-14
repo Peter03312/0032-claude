@@ -39,7 +39,10 @@ export function prepareProblem(p: Problem): PreparedProblem {
   const weights = p.pieces.map((pc) => pc.length + p.kerf);
   const order = p.pieces
     .map((_, i) => i)
-    .sort((a, b) => weights[b] - weights[a] || codePointCompare(p.pieces[a].id, p.pieces[b].id));
+    .sort((a, b) => {
+      const byWeight = weights[b] - weights[a];
+      return byWeight !== 0 ? byWeight : codePointCompare(p.pieces[a].id, p.pieces[b].id);
+    });
   return { bins, stripBins, weights, order };
 }
 
@@ -222,14 +225,15 @@ export function solve(problem: Problem): SolveResult {
     };
   }
 
-  // ---- 贪心给出 f1 上界 ---------------------------------------------------
+  // ---- 两阶段精确搜索 -----------------------------------------------------
+  // 阶段1：只优化 (f1, f2)，对称键忽略装入件身份（f2 只依赖最终余量，与身份
+  //   无关），可大幅合并分支快速确定最优 f1/f2。
+  // 阶段2：固定最优 f1/f2，对称键含装入件多重集，完整枚举取三元组字典序最小。
   let best: Solution | null = ffdGreedy(p);
   let bestF1 = best ? best.stripsUsed : S + 1;
-
-  // 条材签名：按可用容量多重集，用于跨同构条材的对称剪枝
-  const stripSig = prep.stripBins.map((bis) =>
-    bis.map((bi) => bins[bi].capacity).sort((a, b) => a - b).join(','),
-  );
+  let bestF2 = best ? best.shortRemnantCells : Infinity;
+  // 总是先跑阶段1证明最优 f1/f2（贪心解仅作上界），再跑阶段2取字典序。
+  let phase: 1 | 2 = 1;
 
   // 后缀锁定条材集合（按处理顺序）
   const suffixLocks: Set<number>[] = order.map(() => new Set<number>());
@@ -239,6 +243,22 @@ export function solve(problem: Problem): SolveResult {
     if (lockId !== null) suffixLocks[k].add(p.strips.findIndex((s) => s.id === lockId));
   }
 
+  // 条材几何签名：初始可用段完整位置 [from,to) 的多重集。几何完全相同的条材
+  // 才是同构（只比容量会漏掉段起点差异，导致错误合并并列方案）。
+  const stripSig = prep.stripBins.map((bis) =>
+    bis.map((bi) => `${bins[bi].from}-${bins[bi].to}`).sort().join(','),
+  );
+
+  // 每条材「后缀将锁定到它的裁片标识多重集」。几何同构的两条材，只有后缀锁
+  // 也相同才可在阶段1安全合并；否则锁定件将来的归属会让二者不等价。
+  const stripLockSig = p.strips.map((s) =>
+    p.pieces
+      .filter((pc) => pc.lockedStripId === s.id)
+      .map((pc) => pc.id)
+      .sort()
+      .join(','),
+  );
+
   const rem = bins.map((b) => b.capacity);
   const enabled = new Array(S).fill(false);
   const binPieces: string[][] = bins.map(() => []);
@@ -246,14 +266,10 @@ export function solve(problem: Problem): SolveResult {
   let nodes = 0;
   let limitHit = false;
   const startedAt = Date.now();
+  // 阶段1置换表：同一深度下，未来只取决于「各 bin 余量 + 已启用条材集合」
+  // （f1/f2 只依赖余量与启用集，与到达路径无关）。
+  const memo = new Set<string>();
 
-  // f1 下界（体积放松，可证明合法）。后缀件总体积由三部分容纳：
-  //  ① 已启用条材：其全部 run 残量之和是真实可用体积，免费（放松件不可跨 run）；
-  //  ② 后缀锁定而必然新启用的条材：其全部 run 容量之和（锁定组可行性由剪枝③
-  //     逐组校验），条材数固定计入 f1；
-  //  ③ 其余可选未启用条材：一条材对放不进既有残量的件的边际容纳至多等于它
-  //     最大的单个 run（件跨不了疵点），故按最大 run 容量降序抵扣总体积，每抵
-  //     一条计一次 f1。放松单件尺寸只会多估容量、少算条数，故为合法下界。
   const suffixTotal = order.map((_, idx) => {
     let sum = 0;
     for (let j = idx; j < order.length; j++) sum += weights[order[j]];
@@ -262,13 +278,13 @@ export function solve(problem: Problem): SolveResult {
   const stripTotalCap = prep.stripBins.map((bis) =>
     bis.reduce((sum, bi) => sum + bins[bi].capacity, 0),
   );
-  const maxRunOfStrip = prep.stripBins.map((bis) =>
-    bis.reduce((m, bi) => Math.max(m, bins[bi].capacity), 0),
-  );
   const optionalStripsDesc = p.strips
     .map((_, si) => si)
-    .sort((a, b) => maxRunOfStrip[b] - maxRunOfStrip[a]);
+    .sort((a, b) => stripTotalCap[b] - stripTotalCap[a]);
 
+  // f1 下界（条材级体积放松，可证明合法）：后缀总重先由已启用条材全部 run 残量
+  // 抵扣，强制锁定的未启用条材按总容量抵扣且条数固定计入，其余可选条材按总容量
+  // 降序抵扣，每抵一条计一次 f1。放松了单件尺寸与 run 分割，只会少算条数。
   const lowerBoundStrips = (k: number, forcedNew: Set<number>): number => {
     let freeCapacity = 0;
     for (let si = 0; si < S; si++) {
@@ -282,7 +298,7 @@ export function solve(problem: Problem): SolveResult {
     if (residual > 0) {
       for (const si of optionalStripsDesc) {
         if (enabled[si] || forcedNew.has(si)) continue;
-        residual -= maxRunOfStrip[si];
+        residual -= stripTotalCap[si];
         extra++;
         if (residual <= 0) break;
       }
@@ -298,16 +314,23 @@ export function solve(problem: Problem): SolveResult {
     }
     if (k === order.length) {
       const cand = buildSolution(p, prep, binPieces);
-      if (
-        best === null ||
-        cand.stripsUsed < best.stripsUsed ||
-        (cand.stripsUsed === best.stripsUsed && cand.shortRemnantCells < best.shortRemnantCells) ||
-        (cand.stripsUsed === best.stripsUsed &&
-          cand.shortRemnantCells === best.shortRemnantCells &&
+      if (phase === 1) {
+        if (
+          best === null ||
+          cand.stripsUsed < bestF1 ||
+          (cand.stripsUsed === bestF1 && cand.shortRemnantCells < bestF2)
+        ) {
+          best = cand;
+          bestF1 = cand.stripsUsed;
+          bestF2 = cand.shortRemnantCells;
+        }
+      } else if (
+        cand.stripsUsed === bestF1 &&
+        cand.shortRemnantCells === bestF2 &&
+        (best === null || best.stripsUsed !== bestF1 || best.shortRemnantCells !== bestF2 ||
           compareTriples(cand.triples, best.triples) < 0)
       ) {
         best = cand;
-        bestF1 = cand.stripsUsed;
       }
       return;
     }
@@ -316,41 +339,47 @@ export function solve(problem: Problem): SolveResult {
     const piece = p.pieces[pi];
     const w = weights[pi];
 
-    // 剪枝①：乐观总容量（忽略 run 分割），后缀需求放得下吗
-    let residualNeed = 0;
-    for (let j = k; j < order.length; j++) residualNeed += weights[order[j]];
+    // 阶段1置换表：固定深度 k 下，未来搜索只依赖各 bin 余量与已启用条材集合，
+    // 与到达路径无关（已装件身份不影响 f1/f2，且后续件是固定的后缀）。
+    if (phase === 1) {
+      let emask = 0;
+      for (let si = 0; si < S; si++) if (enabled[si]) emask |= 1 << si;
+      const key = `${k}|${emask}|${rem.join(',')}`;
+      if (memo.has(key)) return;
+      memo.add(key);
+    }
+
+    // 剪枝①：乐观总容量
     let cap = 0;
     for (let si = 0; si < S; si++) {
       for (const bi of prep.stripBins[si]) {
         cap += enabled[si] ? rem[bi] : bins[bi].capacity;
       }
     }
-    if (residualNeed > cap) return;
+    if (suffixTotal[k] > cap) return;
 
-    // 剪枝②：后缀锁定的未启用条材必须计入
+    // 剪枝②：后缀锁定而未启用的条材必然计入
     const forcedNew = new Set<number>();
     for (const si of suffixLocks[k]) if (!enabled[si]) forcedNew.add(si);
 
-    // 剪枝③：锁定条材即使未启用，其全部可用容量也必须容得下后缀锁给它的裁片
+    // 剪枝③：锁定条材须容得下后缀锁给它的裁片
     for (const si of forcedNew) {
       let need = 0;
       for (let j = k; j < order.length; j++) {
         const pj = p.pieces[order[j]];
         if (pj.lockedStripId === p.strips[si].id) need += weights[order[j]];
       }
-      let stripCap = 0;
-      for (const bi of prep.stripBins[si]) stripCap += bins[bi].capacity;
-      if (need > stripCap) return;
+      if (need > stripTotalCap[si]) return;
     }
 
-    // 剪枝④：f1 体积放松下界
+    // 剪枝④：f1 下界
     if (lowerBoundStrips(k, forcedNew) > bestF1) return;
 
-    // 候选 bin + 对称剪枝（把产生等价状态的分支只保留字典序最小的一个）：
-    //  B 同构单 run 条材（可用容量相同）在相同余量下等价（含非空 bin），只试
-    //    条材标识最小者；锁定件不跨条材去重；
-    //  C 未启用同构条材的空 bin（含多 run 条材首次启用情形）只试标识最小者。
-    // 注意：同一条材内等余量的不同 run 不等价（既有装入件不同，三元组会变）。
+    if (phase === 2) {
+      // 最终必须恰好 bestF1 条（后缀锁定的未启用条材也必计入）
+      if (usedStrips + forcedNew.size > bestF1) return;
+    }
+
     const lockSi = piece.lockedStripId === null ? null : p.strips.findIndex((s2) => s2.id === piece.lockedStripId);
     const raw: number[] = [];
     for (let bi = 0; bi < B; bi++) {
@@ -358,6 +387,7 @@ export function solve(problem: Problem): SolveResult {
       if (lockSi !== null && bins[bi].stripIdx !== lockSi) continue;
       raw.push(bi);
     }
+    // 已启用条材优先（少开条材）；组内按 (条材标识, 段起点) 先探索字典序小解
     raw.sort((x, y) => {
       const ex = enabled[bins[x].stripIdx] ? 0 : 1;
       const ey = enabled[bins[y].stripIdx] ? 0 : 1;
@@ -365,25 +395,36 @@ export function solve(problem: Problem): SolveResult {
       const idc = codePointCompare(p.strips[bins[x].stripIdx].id, p.strips[bins[y].stripIdx].id);
       return idc || bins[x].from - bins[y].from;
     });
+
+    // 对称剪枝：
+    //  阶段1（只优化 f1/f2）：把本片放进一根全新条材（未启用、各 bin 皆空）时，
+    //    只在「几何签名相同、后缀锁签名相同、且同族条材全部全新」的条材间合并，
+    //    且用 run 起点区分对应 run（同条材不同 run 绝不合并）。
+    //  阶段2（取三元组字典序）：全新条材合并不安全（大片占据后小片无处可去会
+    //    改变条材归属），因此不做任何跨条材合并，完整枚举。
     const cands: number[] = [];
-    const seenKey = new Set<string>();
+    const seenFresh = new Set<string>();
     for (const bi of raw) {
-      const bin = bins[bi];
-      const si = bin.stripIdx;
-      const singleRun = prep.stripBins[si].length === 1;
-      let key: string;
-      if (lockSi !== null) {
-        key = `bin|${bi}`;
-      } else if (singleRun) {
-        key = `iso|${stripSig[si]}|${rem[bi]}|${enabled[si] ? 1 : 0}`;
-      } else if (binPieces[bi].length === 0 && !enabled[si]) {
-        // 多 run 条材首次启用：只有签名且该空 run 容量都相同的同构条材才等价
-        key = `fresh|${stripSig[si]}|cap${bin.capacity}`;
-      } else {
-        key = `bin|${bi}`;
+      const si = bins[bi].stripIdx;
+      if (phase === 1 &&
+          lockSi === null &&
+          !enabled[si] &&
+          prep.stripBins[si].every((q) => binPieces[q].length === 0)) {
+        let familyOk = true;
+        for (let sj = 0; sj < S; sj++) {
+          if (sj === si) continue;
+          if (stripSig[sj] !== stripSig[si] || stripLockSig[sj] !== stripLockSig[si]) continue;
+          if (enabled[sj] || prep.stripBins[sj].some((q) => binPieces[q].length > 0)) {
+            familyOk = false;
+            break;
+          }
+        }
+        if (familyOk) {
+          const key = `${stripSig[si]}|${stripLockSig[si]}|from${bins[bi].from}`;
+          if (seenFresh.has(key)) continue;
+          seenFresh.add(key);
+        }
       }
-      if (seenKey.has(key)) continue;
-      seenKey.add(key);
       cands.push(bi);
     }
 
@@ -406,19 +447,40 @@ export function solve(problem: Problem): SolveResult {
     }
   };
 
+  // 阶段1：求最优 f1/f2
   dfs(0);
-
   if (limitHit) {
     return {
       status: 'limit',
-      message: `精确搜索超过预算（${TIME_LIMIT_MS / 1000} 秒或 ${(NODE_LIMIT / 1e6).toFixed(0)} 百万节点），这通常是接近满载的纯装箱紧实例；请减少裁片数、加大条材或调整锁定后重试`,
+      message: `精确搜索超过预算（${TIME_LIMIT_MS / 1000} 秒），这通常是接近满载的纯装箱紧实例；请减少裁片数、加大条材或调整锁定后重试`,
     };
   }
   if (best === null) {
-    // 总量与单锁容量都通过却仍装不下：结构性无解（run 分割/疵点所致）
     return {
       status: 'unsat',
       unsat: { code: 'none', message: '总容量虽然足够，但受疵点分割与锁定约束，没有任何可行落刀方案' },
+    };
+  }
+
+  // 阶段2：固定最优 f1/f2，重置搜索状态做完整枚举取三元组字典序最小
+  for (let bi = 0; bi < B; bi++) {
+    rem[bi] = bins[bi].capacity;
+    binPieces[bi] = [];
+  }
+  enabled.fill(false);
+  usedStrips = 0;
+  const phase1Best = best;
+  // 阶段2获得独立的时间/节点预算
+  limitHit = false;
+  nodes = 0;
+  phase = 2; dfs(0);
+
+  if (limitHit) {
+    // 阶段2超时：返回阶段1的最优 f1/f2 解（三元组未必字典序最小）不可接受，
+    // 但保证 f1/f2 已最优；按需求「不展示半成品」，这里报 limit。
+    return {
+      status: 'limit',
+      message: `已确定最优条材数（${phase1Best.stripsUsed}）与短料量（${(phase1Best.shortRemnantCells / 10).toFixed(1)} mm），但并列方案过多，预算内无法完成字典序收敛；请减少裁片数后重试`,
     };
   }
   return { status: 'solved', solution: best };

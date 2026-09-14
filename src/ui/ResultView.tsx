@@ -131,12 +131,19 @@ export function ResultView({ draft, out }: { draft: ProblemDraft; out: SolveResu
           {model.strips.map((sv, si) => {
             const y0 = RULER_H + si * (ROW_H + CUT_H + 14);
             const stripDef = problem.strips.find((x) => x.id === sv.stripId)!;
+            // 每根条材按自身换算长度等比缩放（以最长条材为基准），短料明显更短
+            const stripW = sv.length * pxPerCell;
             return (
               <g key={sv.stripId} data-testid={`svg-strip-${si}`} opacity={sv.enabled ? 1 : 0.55}>
                 <text x={4} y={y0 + ROW_H / 2 + 4} fontSize="12" fontWeight="bold" fill="#222">
                   {sv.stripId}{!sv.enabled && '（未启用）'}
                 </text>
-                <rect x={PAD_LEFT} y={y0} width={width} height={ROW_H} fill="#f7f4ee" stroke="#bbb" />
+                <rect x={PAD_LEFT} y={y0} width={stripW} height={ROW_H} fill="#f7f4ee" stroke="#bbb" />
+                {/* 条材末端刻度线，直观显示真实长度差异 */}
+                <line x1={PAD_LEFT + stripW} y1={y0 - 2} x2={PAD_LEFT + stripW} y2={y0 + ROW_H + 2} stroke="#555" strokeWidth="1.2" />
+                <text x={PAD_LEFT + stripW + 4} y={y0 + ROW_H / 2 + 3} fontSize="9" fill="#555" data-testid={`strip-len-${sv.stripId}`}>
+                  {mmLabel(sv.length)}mm
+                </text>
                 {sv.segments.map((seg, gi) => {
                   const x = PAD_LEFT + seg.from * pxPerCell;
                   const w = Math.max((seg.to - seg.from) * pxPerCell, 0.5);
