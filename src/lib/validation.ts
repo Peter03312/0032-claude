@@ -56,8 +56,9 @@ export function validateProblem(draft: ProblemDraft): { problem?: Problem; error
       else if (seenDef.has(d.id.trim())) err(errors, `${db}.id`, '疵点标识在本条材内须唯一');
       else seenDef.add(d.id.trim());
 
-      const f = parseTenths(d.from, '疵点起点');
-      const t = parseTenths(d.to, '疵点终点');
+      // 疵点是坐标（占格 0..L-1），起点可以正好在条材起点 0，故允许零
+      const f = parseTenths(d.from, '疵点起点', { allowZero: true });
+      const t = parseTenths(d.to, '疵点终点', { allowZero: true });
       if (!f.ok) err(errors, `${db}.from`, f.message!);
       if (!t.ok) err(errors, `${db}.to`, t.message!);
       if (f.ok && t.ok) {
@@ -111,8 +112,9 @@ export function validateProblem(draft: ProblemDraft): { problem?: Problem; error
         headTrim: parseTenths(s.headTrim, '', { allowZero: true }).cells!,
         defects: s.defects.map((d) => ({
           id: d.id.trim(),
-          from: parseTenths(d.from, '').cells!,
-          to: parseTenths(d.to, '').cells!,
+          // 疵点是坐标，允许 0（正好在条材起点）
+          from: parseTenths(d.from, '', { allowZero: true }).cells!,
+          to: parseTenths(d.to, '', { allowZero: true }).cells!,
         })),
       })),
       pieces: parsedPieces,

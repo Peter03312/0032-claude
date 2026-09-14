@@ -59,6 +59,21 @@ describe('编辑器录入校验', () => {
     expect(validateProblem(d3).errors['strip.0.defect.0.to']).toContain('超出条材');
   });
 
+  it('疵点正好位于条材起点 0.0mm 合法（坐标允许为零）', () => {
+    const d = base();
+    d.strips[0].defects = [
+      { id: 'D0', from: '0.0', to: '0.0' },
+      { id: 'D1', from: '0.1', to: '0.3' },
+    ];
+    const { problem, errors } = validateProblem(d);
+    expect(errors['strip.0.defect.0.from']).toBeUndefined();
+    expect(errors['strip.0.defect.0.to']).toBeUndefined();
+    expect(errors['strip.0.defects']).toBeUndefined();
+    // from/to 必须真实保留为 0（不是 undefined）
+    expect(problem!.strips[0].defects[0]).toMatchObject({ from: 0, to: 0 });
+    expect(problem!.strips[0].defects[1]).toMatchObject({ from: 1, to: 3 });
+  });
+
   it('相接疵点（闭区间端点相邻）允许', () => {
     const d = base();
     d.strips[0].defects = [

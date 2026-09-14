@@ -87,6 +87,28 @@ describe('端到端：从空仓库起步的完整链路', () => {
     expect(screen.getByTestId('plan-svg').textContent).not.toContain('undefined');
   });
 
+  it('疵点正好位于条材起点 0.0mm 时合法，裁片从疵点之后落刀', async () => {
+    render(<App />);
+    await addStrips(1);
+    await setNum('strip-length-0', '10');
+    await user.click(screen.getByTestId('add-defect-0'));
+    await setNum('defect-from-0-0', '0.0');
+    await setNum('defect-to-0-0', '0.2'); // 闭区间占格 0,1,2
+    await addPieces(1);
+    await setNum('piece-length-0', '5');
+    await setNum('kerf-input', '0');
+    await solve();
+
+    // 无错误、结果图出现
+    expect(screen.queryByTestId('solve-errors')).toBeNull();
+    expect(screen.getByTestId('result-view')).toBeTruthy();
+    // 裁片必须从 0.3mm（格 3）起，而不是 0.0
+    const rows = within(screen.getByTestId('cut-table')).getAllByRole('row').slice(1);
+    const row = rows.find((r) => within(r).queryAllByText(pieceId(0)).length > 0)!;
+    expect(row.textContent).toContain('0.3');
+    expect(row.textContent).not.toContain('起点 0.0');
+  });
+
   it('锁定容量冲突：明确标出锁定项与数字，且不展示半成品', async () => {
     render(<App />);
     await addStrips(2);

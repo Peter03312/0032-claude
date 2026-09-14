@@ -19,6 +19,17 @@ describe('格几何', () => {
     expect(stripFreeRuns(s)).toEqual([[0, 3], [6, 100]]);
   });
 
+  it('疵点正好在条材起点 [0,0]：仅第 0 格不可用，合法坐标', () => {
+    const s = strip({ length: 100, defects: [{ id: 'D0', from: 0, to: 0 }] });
+    expect(unavailableRanges(s)).toContainEqual([0, 1]);
+    expect(stripFreeRuns(s)).toEqual([[1, 100]]);
+  });
+
+  it('疵点从起点 [0,2] 占前三格', () => {
+    const s = strip({ length: 100, defects: [{ id: 'D0', from: 0, to: 2 }] });
+    expect(stripFreeRuns(s)).toEqual([[3, 100]]);
+  });
+
   it('头部修齐与疵点合并，相接疵点并为一段，切成极大可用段', () => {
     const s = strip({
       length: 50, headTrim: 2,
